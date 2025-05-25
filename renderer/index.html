@@ -1,0 +1,214 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; connect-src *; media-src *;">
+    <title>MIDI Controller</title>
+    <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+    <!-- Header -->
+    <div class="header">
+        <div class="logo">MIDI Controller</div>
+        <div class="connection-status">
+            <span id="deviceName">Kein Gerät verbunden</span>
+            <div class="status-indicator" id="statusIndicator"></div>
+            <button class="settings-btn" onclick="openSettings()">Einstellungen</button>
+        </div>
+        <!-- Window Controls for Windows -->
+        <div class="window-controls" id="windowControls" style="display: none;">
+            <button class="window-control minimize" onclick="minimizeWindow()">
+                <svg width="10" height="1" viewBox="0 0 10 1">
+                    <path d="M0 0h10v1H0z" fill="currentColor"/>
+                </svg>
+            </button>
+            <button class="window-control maximize" onclick="maximizeWindow()">
+                <svg width="10" height="10" viewBox="0 0 10 10">
+                    <path d="M0 0v10h10V0H0zm1 1h8v8H1V1z" fill="currentColor"/>
+                </svg>
+            </button>
+            <button class="window-control close" onclick="closeWindow()">
+                <svg width="10" height="10" viewBox="0 0 10 10">
+                    <path d="M1 0L0 1l4 4-4 4 1 1 4-4 4 4 1-1-4-4 4-4-1-1-4 4z" fill="currentColor"/>
+                </svg>
+            </button>
+        </div>
+    </div>
+
+    <!-- Main Container -->
+    <div class="main-container">
+        <!-- Audio Panel -->
+        <div class="panel audio-panel" id="audioPanel">
+            <h2 class="mixer-title">Audio Mixer</h2>
+            
+            <!-- Master Preview Section -->
+            <div class="master-preview">
+                <div class="master-preview-header">
+                    <span class="master-preview-title">Master Output</span>
+                    <div class="master-preview-controls">
+                        <button class="btn btn-secondary" onclick="toggleMasterPreview()" id="masterPreviewBtn">
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" style="margin-right: 5px;">
+                                <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-2 14.5v-9l6 4.5-6 4.5z"/>
+                            </svg>
+                            Preview Mix
+                        </button>
+                    </div>
+                </div>
+                <div class="master-volume">
+                    <span style="min-width: 60px;">Master:</span>
+                    <div class="volume-slider" style="flex: 1;" onmousedown="startMasterVolumeDrag(event)">
+                        <div class="volume-fill" id="master-volume" style="width: 70%"></div>
+                        <div class="volume-handle" style="left: 70%"></div>
+                    </div>
+                    <span class="volume-value" id="master-volume-value">70%</span>
+                </div>
+                <div class="master-vu-meter">
+                    <div class="master-vu-meter-fill" id="master-vu"></div>
+                </div>
+            </div>
+            
+            <div id="audioChannels">
+                <!-- Audio channels will be added here dynamically -->
+            </div>
+            <button class="add-button" onclick="addAudioChannel()">
+                <span>+</span>
+                <span>Audio-Quelle hinzufügen</span>
+            </button>
+        </div>
+
+        <!-- Resize Handle -->
+        <div class="resize-handle" id="resizeHandle"></div>
+
+        <!-- Hotkey Panel -->
+        <div class="panel hotkey-panel" id="hotkeyPanel">
+            <h2 class="mixer-title">Hotkeys</h2>
+            <div class="hotkey-grid" id="hotkeyGrid">
+                <!-- Hotkey buttons will be added here dynamically -->
+            </div>
+            <button class="add-button" onclick="addHotkey()" style="margin-top: 15px;">
+                <span>+</span>
+                <span>Hotkey hinzufügen</span>
+            </button>
+        </div>
+    </div>
+
+    <!-- Settings Modal -->
+    <div class="modal" id="settingsModal">
+        <div class="modal-content">
+            <h3 class="modal-header">Einstellungen</h3>
+            <div class="form-group">
+                <label class="form-label">MIDI-Gerät</label>
+                <select class="form-select" id="midiDeviceSelect">
+                    <option value="">Kein Gerät ausgewählt</option>
+                </select>
+            </div>
+            <div class="form-group">
+                <label class="form-label">OBS WebSocket URL</label>
+                <input type="text" class="form-input" id="obsWebsocket" placeholder="ws://localhost:4455">
+            </div>
+            <div class="form-group">
+                <label class="form-label">OBS Passwort</label>
+                <input type="password" class="form-input" id="obsPassword" placeholder="Optional">
+            </div>
+            <div class="form-group">
+                <label class="form-checkbox">
+                    <input type="checkbox" id="enableVirtualOutput">
+                    <span>Virtual Audio Cable aktivieren (für OBS Audio-Routing)</span>
+                </label>
+            </div>
+            <div class="button-group">
+                <button class="btn btn-secondary" onclick="closeModal('settingsModal')">Abbrechen</button>
+                <button class="btn btn-primary" onclick="saveSettings()">Speichern</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Audio Channel Modal -->
+    <div class="modal" id="audioModal">
+        <div class="modal-content">
+            <h3 class="modal-header">Audio-Quelle konfigurieren</h3>
+            <div class="form-group">
+                <label class="form-label">Name</label>
+                <input type="text" class="form-input" id="audioName" placeholder="z.B. Mikrofon">
+            </div>
+            <div class="form-group">
+                <label class="form-label">Audio-Quelle</label>
+                <select class="form-select" id="audioSource">
+                    <!-- Options will be populated dynamically -->
+                </select>
+            </div>
+            <div class="midi-learn-info" id="audioMidiLearn" style="display: none;">
+                <p>Bewege jetzt den gewünschten MIDI-Regler!</p>
+            </div>
+            <div class="button-group">
+                <button class="btn btn-secondary" onclick="startMidiLearn('audio')">MIDI Learn</button>
+                <button class="btn btn-secondary" onclick="closeModal('audioModal')">Abbrechen</button>
+                <button class="btn btn-primary" onclick="saveAudioChannel()">Speichern</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Hotkey Modal -->
+    <div class="modal" id="hotkeyModal">
+        <div class="modal-content">
+            <h3 class="modal-header">Hotkey konfigurieren</h3>
+            <div class="form-group">
+                <label class="form-label">Name</label>
+                <input type="text" class="form-input" id="hotkeyName" placeholder="z.B. Szene 1">
+            </div>
+            <div class="form-group">
+                <label class="form-label">Aktion</label>
+                <select class="form-select" id="hotkeyAction" onchange="updateActionConfig()">
+                    <option value="play_sound">Sound abspielen</option>
+                    <option value="obs_scene">OBS Szene wechseln</option>
+                    <option value="mute_audio">Audio stummschalten</option>
+                    <option value="trigger_effect">Effekt auslösen</option>
+                </select>
+            </div>
+            <div class="form-group" id="actionConfig">
+                <label class="form-label">Parameter</label>
+                <input type="text" class="form-input" id="hotkeyParameter" placeholder="z.B. Dateiname oder Szenenname">
+            </div>
+            <div class="form-group">
+                <label class="form-label">Modus</label>
+                <select class="form-select" id="hotkeyMode">
+                    <option value="press">Drücken</option>
+                    <option value="hold">Halten</option>
+                </select>
+            </div>
+            <div class="midi-learn-info" id="hotkeyMidiLearn" style="display: none;">
+                <p>Drücke jetzt den gewünschten MIDI-Button!</p>
+            </div>
+            <div class="button-group">
+                <button class="btn btn-secondary" onclick="startMidiLearn('hotkey')">MIDI Learn</button>
+                <button class="btn btn-secondary" onclick="closeModal('hotkeyModal')">Abbrechen</button>
+                <button class="btn btn-primary" onclick="saveHotkey()">Speichern</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Scripts -->
+    <script src="renderer.js"></script>
+    <script>
+        // Platform specific adjustments
+        if (window.electronAPI && window.electronAPI.platform === 'win32') {
+            document.body.classList.add('platform-win32');
+            document.getElementById('windowControls').style.display = 'flex';
+        }
+
+        // Window controls
+        function minimizeWindow() {
+            window.electronAPI.minimizeWindow && window.electronAPI.minimizeWindow();
+        }
+
+        function maximizeWindow() {
+            window.electronAPI.maximizeWindow && window.electronAPI.maximizeWindow();
+        }
+
+        function closeWindow() {
+            window.electronAPI.closeWindow && window.electronAPI.closeWindow();
+        }
+    </script>
+</body>
+</html>

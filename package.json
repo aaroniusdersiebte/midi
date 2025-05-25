@@ -1,0 +1,39 @@
+{
+  "name": "midi-controller",
+  "version": "1.0.0",
+  "description": "MIDI Controller für Audio Mixing und Hotkeys",
+  "main": "main.js",
+  "scripts": {
+    "setup": "node setup.js",
+    "start": "electron .",
+    "build-win": "electron-builder --win",
+    "build": "electron-builder",
+    "postinstall": "node setup.js"
+  },
+  "author": "Your Name",
+  "license": "MIT",
+  "devDependencies": {
+    "electron": "^28.0.0",
+    "electron-builder": "^24.9.1"
+  },
+  "dependencies": {
+    "electron-store": "^8.1.0",
+    "obs-websocket-js": "^5.0.6",
+    "sortablejs": "^1.15.6"
+  },
+  "build": {
+    "appId": "com.yourcompany.midicontroller",
+    "productName": "MIDI Controller",
+    "directories": {
+      "output": "dist"
+    },
+    "win": {
+      "target": "nsis",
+      "icon": "assets/icons/icon.ico"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true
+    }
+  }
+}
