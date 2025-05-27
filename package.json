@@ -8,16 +8,22 @@
     "start": "electron .",
     "build-win": "electron-builder --win",
     "build": "electron-builder",
-    "postinstall": "node setup.js"
+    "postinstall": "node setup.js",
+    "build-native": "node-gyp rebuild",
+    "clean": "node-gyp clean",
+    "dev": "electron . --inspect=5858",
+    "install-obs": "npm install obs-websocket-js@5.0.6"
   },
   "author": "Your Name",
   "license": "MIT",
   "devDependencies": {
     "electron": "^28.0.0",
-    "electron-builder": "^24.9.1"
+    "electron-builder": "^24.9.1",
+    "node-gyp": "^10.0.1"
   },
   "dependencies": {
     "electron-store": "^8.1.0",
+    "node-addon-api": "^7.0.0",
     "obs-websocket-js": "^5.0.6",
     "sortablejs": "^1.15.6"
   },
@@ -27,6 +33,15 @@
     "directories": {
       "output": "dist"
     },
+    "files": [
+      "main.js",
+      "preload.js",
+      "renderer/**/*",
+      "native/**/*",
+      "build/Release/*.node",
+      "assets/**/*",
+      "package.json"
+    ],
     "win": {
       "target": "nsis",
       "icon": "assets/icons/icon.ico"
@@ -35,5 +50,6 @@
       "oneClick": false,
       "allowToChangeInstallationDirectory": true
     }
-  }
+  },
+  "gypfile": true
 }

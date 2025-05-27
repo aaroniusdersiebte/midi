@@ -6,6 +6,47 @@
     <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; connect-src *; media-src *;">
     <title>MIDI Controller</title>
     <link rel="stylesheet" href="styles.css">
+    <style>
+        /* Additional CSS for improved animations */
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+        
+        .compact-mode .audio-panel {
+            min-width: 250px;
+        }
+        
+        .compact-mode .hotkey-grid {
+            grid-template-columns: repeat(auto-fill, minmax(100px, 1fr));
+        }
+        
+        .low-height .main-container {
+            height: calc(100vh - 40px);
+        }
+        
+        .field-error {
+            animation: slideUp 0.2s ease-out;
+        }
+        
+        .tooltip {
+            animation: fadeIn 0.2s ease-out;
+        }
+        
+        .resize-handle.active {
+            background: var(--secondary) !important;
+        }
+        
+        .drag-over {
+            border: 2px dashed var(--secondary) !important;
+            background: rgba(224, 130, 36, 0.1) !important;
+        }
+        
+        .invalid {
+            border-color: var(--danger) !important;
+            box-shadow: 0 0 0 2px rgba(244, 67, 54, 0.2) !important;
+        }
+    </style>
 </head>
 <body>
     <!-- Header -->
@@ -96,27 +137,74 @@
     <!-- Settings Modal -->
     <div class="modal" id="settingsModal">
         <div class="modal-content">
-            <h3 class="modal-header">Einstellungen</h3>
-            <div class="form-group">
-                <label class="form-label">MIDI-Gerät</label>
-                <select class="form-select" id="midiDeviceSelect">
-                    <option value="">Kein Gerät ausgewählt</option>
-                </select>
+            <h3 class="modal-header">
+                Einstellungen
+                <button class="icon-btn" onclick="closeModal('settingsModal')" style="float: right; margin-top: -5px;">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
+                        <path d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/>
+                    </svg>
+                </button>
+            </h3>
+            
+            <div class="settings-section">
+                <h4 style="color: var(--secondary); margin-bottom: 15px;">MIDI Gerät</h4>
+                <div class="form-group">
+                    <label class="form-label">MIDI-Gerät</label>
+                    <select class="form-select" id="midiDeviceSelect">
+                        <option value="">Kein Gerät ausgewählt</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <button class="btn btn-secondary" onclick="testMIDIConnection()" type="button">
+                        Verbindung testen
+                    </button>
+                </div>
             </div>
-            <div class="form-group">
-                <label class="form-label">OBS WebSocket URL</label>
-                <input type="text" class="form-input" id="obsWebsocket" placeholder="ws://localhost:4455">
+            
+            <div class="settings-section">
+                <h4 style="color: var(--secondary); margin-bottom: 15px;">OBS Integration</h4>
+                <div class="form-group">
+                    <label class="form-label">OBS WebSocket URL</label>
+                    <input type="text" class="form-input" id="obsWebsocket" placeholder="ws://localhost:4455">
+                </div>
+                <div class="form-group">
+                    <label class="form-label">OBS Passwort</label>
+                    <input type="password" class="form-input" id="obsPassword" placeholder="Optional">
+                </div>
+                <div class="form-group">
+                    <button class="btn btn-secondary" onclick="testOBSConnection()" type="button">
+                        OBS Verbindung testen
+                    </button>
+                </div>
             </div>
-            <div class="form-group">
-                <label class="form-label">OBS Passwort</label>
-                <input type="password" class="form-input" id="obsPassword" placeholder="Optional">
+            
+            <div class="settings-section">
+                <h4 style="color: var(--secondary); margin-bottom: 15px;">Audio Routing</h4>
+                <div class="form-group">
+                    <label class="form-checkbox">
+                        <input type="checkbox" id="enableVirtualOutput">
+                        <span>Virtual Audio Cable aktivieren (für OBS Audio-Routing)</span>
+                    </label>
+                </div>
             </div>
-            <div class="form-group">
-                <label class="form-checkbox">
-                    <input type="checkbox" id="enableVirtualOutput">
-                    <span>Virtual Audio Cable aktivieren (für OBS Audio-Routing)</span>
-                </label>
+            
+            <div class="settings-section">
+                <h4 style="color: var(--secondary); margin-bottom: 15px;">Konfiguration</h4>
+                <div class="form-group">
+                    <div class="button-group">
+                        <button class="btn btn-secondary" onclick="exportConfig()" type="button">
+                            Konfiguration exportieren
+                        </button>
+                        <button class="btn btn-secondary" onclick="importConfig()" type="button">
+                            Konfiguration importieren
+                        </button>
+                        <button class="btn btn-secondary" onclick="resetConfig()" type="button">
+                            Zurücksetzen
+                        </button>
+                    </div>
+                </div>
             </div>
+            
             <div class="button-group">
                 <button class="btn btn-secondary" onclick="closeModal('settingsModal')">Abbrechen</button>
                 <button class="btn btn-primary" onclick="saveSettings()">Speichern</button>
@@ -129,8 +217,8 @@
         <div class="modal-content">
             <h3 class="modal-header">Audio-Quelle konfigurieren</h3>
             <div class="form-group">
-                <label class="form-label">Name</label>
-                <input type="text" class="form-input" id="audioName" placeholder="z.B. Mikrofon">
+                <label class="form-label">Name *</label>
+                <input type="text" class="form-input" id="audioName" placeholder="z.B. Mikrofon" maxlength="50" required>
             </div>
             <div class="form-group">
                 <label class="form-label">Audio-Quelle</label>
@@ -154,8 +242,8 @@
         <div class="modal-content">
             <h3 class="modal-header">Hotkey konfigurieren</h3>
             <div class="form-group">
-                <label class="form-label">Name</label>
-                <input type="text" class="form-input" id="hotkeyName" placeholder="z.B. Szene 1">
+                <label class="form-label">Name *</label>
+                <input type="text" class="form-input" id="hotkeyName" placeholder="z.B. Szene 1" maxlength="30" required>
             </div>
             <div class="form-group">
                 <label class="form-label">Aktion</label>
@@ -164,6 +252,8 @@
                     <option value="obs_scene">OBS Szene wechseln</option>
                     <option value="mute_audio">Audio stummschalten</option>
                     <option value="trigger_effect">Effekt auslösen</option>
+                    <option value="toggle_preview">Preview umschalten</option>
+                    <option value="set_volume">Lautstärke setzen</option>
                 </select>
             </div>
             <div class="form-group" id="actionConfig">
@@ -188,9 +278,99 @@
         </div>
     </div>
 
-    <!-- Scripts -->
+    <!-- Import File Input (hidden) -->
+    <input type="file" id="importFileInput" accept=".json" style="display: none;" onchange="handleImportFile(event)">
+
+    <!-- Scripts - Load modules first, then main -->
+    <script src="modules/utils.js"></script>
+    <script src="modules/config-manager.js"></script>
+    <script src="modules/midi-controller.js"></script>
+    <script src="modules/audio-mixer.js"></script>
+    <script src="modules/hotkey-manager.js"></script>
+    <script src="modules/obs-controller.js"></script>
+    <script src="modules/ui-manager.js"></script>
     <script src="renderer.js"></script>
+    
     <script>
+        // Global functions for onclick handlers
+        function openSettings() {
+            window.ConfigManager.openSettings(window.APP_STATE);
+        }
+        
+        function saveSettings() {
+            window.ConfigManager.saveSettings(window.APP_STATE);
+        }
+        
+        function closeModal(modalId) {
+            window.Utils.closeModal(modalId);
+        }
+        
+        function addAudioChannel() {
+            window.AudioMixer.addChannel(window.APP_STATE);
+        }
+        
+        function saveAudioChannel() {
+            window.AudioMixer.saveChannel(window.APP_STATE);
+        }
+        
+        function addHotkey() {
+            window.HotkeyManager.addHotkey(window.APP_STATE);
+        }
+        
+        function saveHotkey() {
+            window.HotkeyManager.saveHotkey(window.APP_STATE);
+        }
+        
+        function startMidiLearn(type) {
+            window.MIDIController.startLearn(window.APP_STATE, type);
+        }
+        
+        function updateActionConfig() {
+            window.HotkeyManager.updateActionConfig(window.APP_STATE);
+        }
+        
+        function toggleMasterPreview() {
+            window.AudioMixer.toggleMasterPreview(window.APP_STATE);
+        }
+        
+        function startMasterVolumeDrag(event) {
+            window.AudioMixer.startMasterVolumeDrag(window.APP_STATE, event);
+        }
+        
+        function testMIDIConnection() {
+            window.MIDIController.testConnection(window.APP_STATE);
+        }
+        
+        function testOBSConnection() {
+            const url = document.getElementById('obsWebsocket').value;
+            const password = document.getElementById('obsPassword').value;
+            if (url) {
+                window.OBSController.testConnection(window.APP_STATE, url, password);
+            } else {
+                window.Utils.showNotification('Bitte gib eine OBS WebSocket URL ein', 'error');
+            }
+        }
+        
+        function exportConfig() {
+            window.ConfigManager.exportConfig(window.APP_STATE);
+        }
+        
+        function importConfig() {
+            document.getElementById('importFileInput').click();
+        }
+        
+        function handleImportFile(event) {
+            const file = event.target.files[0];
+            if (file) {
+                window.ConfigManager.importConfig(window.APP_STATE, file);
+            }
+            event.target.value = ''; // Reset input
+        }
+        
+        function resetConfig() {
+            window.ConfigManager.resetConfig(window.APP_STATE);
+        }
+        
         // Platform specific adjustments
         if (window.electronAPI && window.electronAPI.platform === 'win32') {
             document.body.classList.add('platform-win32');
@@ -208,6 +388,11 @@
 
         function closeWindow() {
             window.electronAPI.closeWindow && window.electronAPI.closeWindow();
+        }
+        
+        // Listen for audio status updates
+        if (window.electronAPI && window.electronAPI.onAudioLevels) {
+            // This will be handled by the main renderer.js
         }
     </script>
 </body>
