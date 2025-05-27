@@ -1,5 +1,5 @@
 // renderer/modules/obs-controller.js
-// OBS WebSocket integration
+// Enhanced OBS WebSocket integration with better error handling
 
 window.OBSController = (function() {
     
@@ -8,7 +8,6 @@ window.OBSController = (function() {
         console.log('📹 Initializing OBS Controller...');
         
         try {
-            // OBS WebSocket will be initialized when settings are loaded
             console.log('✅ OBS Controller initialized');
             
         } catch (error) {
@@ -17,32 +16,45 @@ window.OBSController = (function() {
         }
     }
 
-    // Connect to OBS WebSocket
+    // Connect to OBS WebSocket with better error handling
     async function connect(app, url, password) {
         try {
+            console.log(`🔗 Attempting to connect to OBS at ${url}...`);
+            
+            // Check if OBS WebSocket is available
+            if (!window.electronAPI || !window.electronAPI.isOBSAvailable()) {
+                throw new Error('OBS WebSocket library not available. Run: npm install obs-websocket-js@5.0.6');
+            }
+            
             // Create OBS WebSocket instance
-            if (window.electronAPI && window.electronAPI.createOBSWebSocket) {
-                app.obsWebSocket = window.electronAPI.createOBSWebSocket();
-            } else if (typeof OBSWebSocket !== 'undefined') {
-                app.obsWebSocket = new OBSWebSocket();
-            } else {
-                throw new Error('OBS WebSocket library not available');
+            app.obsWebSocket = window.electronAPI.createOBSWebSocket();
+            console.log('📦 OBS WebSocket instance created');
+            
+            // Setup event listeners before connecting
+            setupEventListeners(app);
+            
+            // Validate URL format
+            if (!url.startsWith('ws://') && !url.startsWith('wss://')) {
+                url = 'ws://' + url;
             }
             
-            console.log(`🔗 Connecting to OBS at ${url}...`);
+            console.log(`🔗 Connecting to: ${url}`);
             
-            // Connect with optional password
-            if (password) {
-                await app.obsWebSocket.connect(url, password);
-            } else {
-                await app.obsWebSocket.connect(url);
-            }
+            // Set connection timeout
+            const connectionTimeout = new Promise((_, reject) => {
+                setTimeout(() => reject(new Error('Connection timeout (10s)')), 10000);
+            });
+            
+            // Attempt connection with optional password
+            const connectionPromise = password ? 
+                app.obsWebSocket.connect(url, password) : 
+                app.obsWebSocket.connect(url);
+            
+            // Race between connection and timeout
+            await Promise.race([connectionPromise, connectionTimeout]);
             
             console.log('✅ OBS WebSocket connected successfully');
-            window.Utils.showNotification('OBS erfolgreich verbunden', 'success');
-            
-            // Setup event listeners
-            setupEventListeners(app);
+            window.Utils.showNotification('✅ OBS erfolgreich verbunden', 'success');
             
             // Get initial scene list
             await updateSceneList(app);
@@ -51,7 +63,21 @@ window.OBSController = (function() {
             
         } catch (error) {
             console.error('❌ OBS connection failed:', error);
-            window.Utils.showNotification(`OBS Verbindung fehlgeschlagen: ${error.message}`, 'error');
+            
+            // Provide specific error messages
+            let errorMessage = 'OBS Verbindung fehlgeschlagen';
+            
+            if (error.message.includes('ECONNREFUSED')) {
+                errorMessage = 'OBS nicht erreichbar - ist OBS geöffnet und WebSocket Server aktiv?';
+            } else if (error.message.includes('timeout')) {
+                errorMessage = 'Verbindungszeit überschritten - überprüfe URL und Netzwerk';
+            } else if (error.message.includes('Authentication')) {
+                errorMessage = 'Falsches Passwort - überprüfe WebSocket Server Einstellungen';
+            } else if (error.message.includes('not available')) {
+                errorMessage = 'OBS WebSocket Plugin fehlt - installiere obs-websocket-js';
+            }
+            
+            window.Utils.showNotification(errorMessage, 'error');
             
             if (app.obsWebSocket) {
                 app.obsWebSocket = null;
@@ -76,41 +102,54 @@ window.OBSController = (function() {
         }
     }
 
-    // Setup OBS event listeners
+    // Setup OBS event listeners with better error handling
     function setupEventListeners(app) {
         if (!app.obsWebSocket) return;
         
         try {
-            // Listen for scene changes
-            app.obsWebSocket.on('CurrentProgramSceneChanged', (data) => {
-                console.log(`📺 Scene changed to: ${data.sceneName}`);
-                window.Utils.showNotification(`OBS Szene: ${data.sceneName}`, 'info');
+            // Connection events
+            app.obsWebSocket.on('ConnectionOpened', () => {
+                console.log('📹 OBS connection opened');
             });
             
-            // Listen for streaming state changes
+            app.obsWebSocket.on('ConnectionClosed', () => {
+                console.log('📹 OBS connection closed');
+                window.Utils.showNotification('OBS Verbindung getrennt', 'warning');
+            });
+            
+            app.obsWebSocket.on('ConnectionError', (error) => {
+                console.error('📹 OBS connection error:', error);
+                window.Utils.showNotification('OBS Verbindungsfehler: ' + error.message, 'error');
+            });
+            
+            // Authentication events
+            app.obsWebSocket.on('AuthenticationSuccess', () => {
+                console.log('📹 OBS authentication successful');
+            });
+            
+            app.obsWebSocket.on('AuthenticationFailure', (error) => {
+                console.error('📹 OBS authentication failed:', error);
+                window.Utils.showNotification('OBS Authentifizierung fehlgeschlagen', 'error');
+            });
+            
+            // Scene events
+            app.obsWebSocket.on('CurrentProgramSceneChanged', (data) => {
+                console.log(`📺 Scene changed to: ${data.sceneName}`);
+                window.Utils.showNotification(`📺 OBS Szene: ${data.sceneName}`, 'info');
+            });
+            
+            // Streaming events
             app.obsWebSocket.on('StreamStateChanged', (data) => {
                 const state = data.outputActive ? 'gestartet' : 'gestoppt';
                 console.log(`📡 Stream ${state}`);
-                window.Utils.showNotification(`Stream ${state}`, data.outputActive ? 'success' : 'info');
+                window.Utils.showNotification(`📡 Stream ${state}`, data.outputActive ? 'success' : 'info');
             });
             
-            // Listen for recording state changes
+            // Recording events
             app.obsWebSocket.on('RecordStateChanged', (data) => {
                 const state = data.outputActive ? 'gestartet' : 'gestoppt';
                 console.log(`🔴 Recording ${state}`);
-                window.Utils.showNotification(`Aufnahme ${state}`, data.outputActive ? 'success' : 'info');
-            });
-            
-            // Listen for connection errors
-            app.obsWebSocket.on('ConnectionError', (error) => {
-                console.error('OBS connection error:', error);
-                window.Utils.showNotification('OBS Verbindungsfehler', 'error');
-            });
-            
-            // Listen for authentication failures
-            app.obsWebSocket.on('AuthenticationFailure', () => {
-                console.error('OBS authentication failed');
-                window.Utils.showNotification('OBS Authentifizierung fehlgeschlagen', 'error');
+                window.Utils.showNotification(`🔴 Aufnahme ${state}`, data.outputActive ? 'success' : 'info');
             });
             
         } catch (error) {
@@ -118,7 +157,7 @@ window.OBSController = (function() {
         }
     }
 
-    // Get scene list
+    // Get scene list with error handling
     async function getScenes(app) {
         if (!app.obsWebSocket || !isConnected(app)) {
             console.warn('OBS not connected');
@@ -133,15 +172,16 @@ window.OBSController = (function() {
             
         } catch (error) {
             console.error('Failed to get OBS scenes:', error);
-            window.Utils.showNotification('Fehler beim Abrufen der OBS Szenen', 'error');
+            window.Utils.showNotification('Fehler beim Abrufen der OBS Szenen: ' + error.message, 'error');
             return [];
         }
     }
 
-    // Set current scene
+    // Set current scene with error handling
     async function setScene(app, sceneName) {
         if (!app.obsWebSocket || !isConnected(app)) {
             console.warn('OBS not connected');
+            window.Utils.showNotification('OBS nicht verbunden', 'error');
             return false;
         }
         
@@ -152,7 +192,7 @@ window.OBSController = (function() {
             
         } catch (error) {
             console.error('Failed to set OBS scene:', error);
-            window.Utils.showNotification(`Fehler beim Wechseln zur Szene: ${sceneName}`, 'error');
+            window.Utils.showNotification(`Fehler beim Wechseln zur Szene "${sceneName}": ${error.message}`, 'error');
             return false;
         }
     }
@@ -183,7 +223,7 @@ window.OBSController = (function() {
         try {
             await app.obsWebSocket.call('StartStream');
             console.log('📡 Stream started');
-            window.Utils.showNotification('Stream gestartet', 'success');
+            window.Utils.showNotification('📡 Stream gestartet', 'success');
             return true;
             
         } catch (error) {
@@ -203,7 +243,7 @@ window.OBSController = (function() {
         try {
             await app.obsWebSocket.call('StopStream');
             console.log('📡 Stream stopped');
-            window.Utils.showNotification('Stream gestoppt', 'info');
+            window.Utils.showNotification('📡 Stream gestoppt', 'info');
             return true;
             
         } catch (error) {
@@ -223,7 +263,7 @@ window.OBSController = (function() {
         try {
             await app.obsWebSocket.call('StartRecord');
             console.log('🔴 Recording started');
-            window.Utils.showNotification('Aufnahme gestartet', 'success');
+            window.Utils.showNotification('🔴 Aufnahme gestartet', 'success');
             return true;
             
         } catch (error) {
@@ -243,7 +283,7 @@ window.OBSController = (function() {
         try {
             await app.obsWebSocket.call('StopRecord');
             console.log('🔴 Recording stopped');
-            window.Utils.showNotification('Aufnahme gestoppt', 'info');
+            window.Utils.showNotification('🔴 Aufnahme gestoppt', 'info');
             return true;
             
         } catch (error) {
@@ -276,100 +316,6 @@ window.OBSController = (function() {
         }
     }
 
-    // Get recording status
-    async function getRecordingStatus(app) {
-        if (!app.obsWebSocket || !isConnected(app)) {
-            return { active: false, timecode: null };
-        }
-        
-        try {
-            const response = await app.obsWebSocket.call('GetRecordStatus');
-            return {
-                active: response.outputActive,
-                timecode: response.outputTimecode,
-                bytes: response.outputBytes
-            };
-            
-        } catch (error) {
-            console.error('Failed to get recording status:', error);
-            return { active: false, timecode: null };
-        }
-    }
-
-    // Toggle source visibility
-    async function toggleSource(app, sceneName, sourceName, visible = null) {
-        if (!app.obsWebSocket || !isConnected(app)) {
-            return false;
-        }
-        
-        try {
-            if (visible === null) {
-                // Get current visibility
-                const response = await app.obsWebSocket.call('GetSceneItemEnabled', {
-                    sceneName,
-                    sceneItemId: await getSourceId(app, sceneName, sourceName)
-                });
-                visible = !response.sceneItemEnabled;
-            }
-            
-            await app.obsWebSocket.call('SetSceneItemEnabled', {
-                sceneName,
-                sceneItemId: await getSourceId(app, sceneName, sourceName),
-                sceneItemEnabled: visible
-            });
-            
-            const status = visible ? 'eingeblendet' : 'ausgeblendet';
-            window.Utils.showNotification(`${sourceName} ${status}`, 'info');
-            return true;
-            
-        } catch (error) {
-            console.error('Failed to toggle source:', error);
-            window.Utils.showNotification(`Fehler beim Umschalten der Quelle: ${sourceName}`, 'error');
-            return false;
-        }
-    }
-
-    // Get source ID
-    async function getSourceId(app, sceneName, sourceName) {
-        try {
-            const response = await app.obsWebSocket.call('GetSceneItemList', { sceneName });
-            const item = response.sceneItems.find(item => item.sourceName === sourceName);
-            return item ? item.sceneItemId : null;
-            
-        } catch (error) {
-            console.error('Failed to get source ID:', error);
-            return null;
-        }
-    }
-
-    // Set source transform
-    async function setSourceTransform(app, sceneName, sourceName, transform) {
-        if (!app.obsWebSocket || !isConnected(app)) {
-            return false;
-        }
-        
-        try {
-            const sourceId = await getSourceId(app, sceneName, sourceName);
-            if (!sourceId) {
-                throw new Error(`Source ${sourceName} not found in scene ${sceneName}`);
-            }
-            
-            await app.obsWebSocket.call('SetSceneItemTransform', {
-                sceneName,
-                sceneItemId: sourceId,
-                sceneItemTransform: transform
-            });
-            
-            console.log(`🎯 Transform set for ${sourceName}`);
-            return true;
-            
-        } catch (error) {
-            console.error('Failed to set source transform:', error);
-            window.Utils.showNotification(`Fehler beim Setzen der Transformation: ${sourceName}`, 'error');
-            return false;
-        }
-    }
-
     // Update scene list in UI
     async function updateSceneList(app) {
         try {
@@ -390,6 +336,8 @@ window.OBSController = (function() {
                 }
             }
             
+            console.log(`📋 Scene list updated: ${scenes.length} scenes`);
+            
         } catch (error) {
             console.error('Failed to update scene list:', error);
         }
@@ -402,7 +350,10 @@ window.OBSController = (function() {
 
     // Check connection status
     function isConnected(app) {
-        return app.obsWebSocket && app.obsWebSocket.identified;
+        return app.obsWebSocket && 
+               app.obsWebSocket.identified && 
+               app.obsWebSocket.socket && 
+               app.obsWebSocket.socket.readyState === WebSocket.OPEN;
     }
 
     // Get connection info
@@ -411,7 +362,8 @@ window.OBSController = (function() {
             return {
                 connected: false,
                 url: null,
-                version: null
+                version: null,
+                status: 'No WebSocket instance'
             };
         }
         
@@ -419,88 +371,123 @@ window.OBSController = (function() {
             connected: isConnected(app),
             url: app.obsWebSocket.address || null,
             version: app.obsWebSocket.obsWebSocketVersion || null,
-            rpcVersion: app.obsWebSocket.rpcVersion || null
+            rpcVersion: app.obsWebSocket.rpcVersion || null,
+            status: isConnected(app) ? 'Connected' : 'Disconnected'
         };
     }
 
-    // Test OBS connection
+    // Test OBS connection with detailed diagnostics
     async function testConnection(app, url, password) {
         try {
-            window.Utils.showNotification('Teste OBS Verbindung...', 'info');
+            window.Utils.showNotification('🔍 Teste OBS Verbindung...', 'info');
             
-            // Create temporary WebSocket for testing
-            const testWS = window.electronAPI ? 
-                window.electronAPI.createOBSWebSocket() : 
-                new OBSWebSocket();
+            console.log('📋 OBS Connection Test Started');
+            console.log(`URL: ${url}`);
+            console.log(`Password: ${password ? '[SET]' : '[NONE]'}`);
             
-            if (password) {
-                await testWS.connect(url, password);
-            } else {
-                await testWS.connect(url);
+            // Check if OBS WebSocket library is available
+            if (!window.electronAPI || !window.electronAPI.isOBSAvailable()) {
+                throw new Error('OBS WebSocket library not available. Install with: npm install obs-websocket-js@5.0.6');
             }
+            
+            // Create test WebSocket
+            const testWS = window.electronAPI.createOBSWebSocket();
+            console.log('📦 Test WebSocket instance created');
+            
+            // Validate URL format
+            if (!url.startsWith('ws://') && !url.startsWith('wss://')) {
+                url = 'ws://' + url;
+            }
+            
+            // Setup test timeout
+            const testTimeout = new Promise((_, reject) => {
+                setTimeout(() => reject(new Error('Connection test timeout (15s)')), 15000);
+            });
+            
+            // Attempt connection
+            const connectionPromise = password ? 
+                testWS.connect(url, password) : 
+                testWS.connect(url);
+            
+            await Promise.race([connectionPromise, testTimeout]);
+            console.log('✅ Test connection established');
             
             // Get version info
             const version = await testWS.call('GetVersion');
+            console.log('📋 OBS Version:', version);
+            
+            // Get some basic info
+            const scenes = await testWS.call('GetSceneList');
+            console.log(`📋 Found ${scenes.scenes.length} scenes`);
             
             // Disconnect test connection
             await testWS.disconnect();
+            console.log('📋 Test connection closed');
             
             window.Utils.showNotification(
-                `✅ OBS Verbindung erfolgreich! Version: ${version.obsVersion}`, 
+                `✅ OBS Test erfolgreich!\nVersion: ${version.obsVersion}\nSzenen: ${scenes.scenes.length}`, 
                 'success'
             );
             
             return true;
             
         } catch (error) {
-            console.error('OBS connection test failed:', error);
-            window.Utils.showNotification(
-                `❌ OBS Verbindungstest fehlgeschlagen: ${error.message}`, 
-                'error'
-            );
+            console.error('❌ OBS connection test failed:', error);
+            
+            let diagnosticMessage = '❌ OBS Verbindungstest fehlgeschlagen:\n';
+            
+            if (error.message.includes('ECONNREFUSED')) {
+                diagnosticMessage += '• OBS ist nicht geöffnet\n• WebSocket Server ist nicht aktiv\n• Überprüfe Tools → WebSocket Server Settings';
+            } else if (error.message.includes('timeout')) {
+                diagnosticMessage += '• Verbindung dauert zu lange\n• Überprüfe URL (Standard: ws://localhost:4455)\n• Überprüfe Firewall';
+            } else if (error.message.includes('Authentication')) {
+                diagnosticMessage += '• Falsches Passwort\n• Überprüfe WebSocket Server Settings in OBS';
+            } else if (error.message.includes('not available')) {
+                diagnosticMessage += '• OBS WebSocket Plugin fehlt\n• Führe aus: npm install obs-websocket-js@5.0.6';
+            } else {
+                diagnosticMessage += error.message;
+            }
+            
+            window.Utils.showNotification(diagnosticMessage, 'error');
             return false;
         }
     }
 
-    // Get OBS stats
-    async function getStats(app) {
+    // Get detailed OBS status
+    async function getDetailedStatus(app) {
         if (!app.obsWebSocket || !isConnected(app)) {
-            return null;
+            return {
+                connected: false,
+                version: null,
+                scenes: [],
+                streaming: false,
+                recording: false
+            };
         }
         
         try {
-            const stats = await app.obsWebSocket.call('GetStats');
+            const [version, sceneList, streamStatus, recordStatus] = await Promise.all([
+                app.obsWebSocket.call('GetVersion'),
+                app.obsWebSocket.call('GetSceneList'),
+                app.obsWebSocket.call('GetStreamStatus').catch(() => ({ outputActive: false })),
+                app.obsWebSocket.call('GetRecordStatus').catch(() => ({ outputActive: false }))
+            ]);
+            
             return {
-                cpu: stats.cpuUsage,
-                memory: stats.memoryUsage,
-                fps: stats.activeFps,
-                renderTotalFrames: stats.renderTotalFrames,
-                renderSkippedFrames: stats.renderSkippedFrames,
-                outputTotalFrames: stats.outputTotalFrames,
-                outputSkippedFrames: stats.outputSkippedFrames
+                connected: true,
+                version: version.obsVersion,
+                scenes: sceneList.scenes.map(s => s.sceneName),
+                streaming: streamStatus.outputActive,
+                recording: recordStatus.outputActive,
+                currentScene: sceneList.currentProgramSceneName
             };
             
         } catch (error) {
-            console.error('Failed to get OBS stats:', error);
-            return null;
-        }
-    }
-
-    // Create scene collection
-    async function createSceneCollection(app, name) {
-        if (!app.obsWebSocket || !isConnected(app)) {
-            return false;
-        }
-        
-        try {
-            await app.obsWebSocket.call('CreateSceneCollection', { sceneCollectionName: name });
-            window.Utils.showNotification(`Szenen-Sammlung "${name}" erstellt`, 'success');
-            return true;
-            
-        } catch (error) {
-            console.error('Failed to create scene collection:', error);
-            window.Utils.showNotification(`Fehler beim Erstellen der Szenen-Sammlung: ${error.message}`, 'error');
-            return false;
+            console.error('Failed to get detailed OBS status:', error);
+            return {
+                connected: false,
+                error: error.message
+            };
         }
     }
 
@@ -517,14 +504,10 @@ window.OBSController = (function() {
         startRecording,
         stopRecording,
         getStreamingStatus,
-        getRecordingStatus,
-        toggleSource,
-        setSourceTransform,
         updateScenes,
         isConnected,
         getConnectionInfo,
         testConnection,
-        getStats,
-        createSceneCollection
+        getDetailedStatus
     };
 })();

@@ -1,19 +1,28 @@
 {
   "name": "midi-controller",
   "version": "1.0.0",
-  "description": "MIDI Controller für Audio Mixing und Hotkeys",
+  "description": "Professional MIDI Controller for Audio Mixing and Hotkeys",
   "main": "main.js",
   "scripts": {
     "setup": "node setup.js",
     "start": "electron .",
-    "build-win": "electron-builder --win",
-    "build": "electron-builder",
-    "postinstall": "node setup.js",
+    "dev": "electron . --dev",
     "build-native": "node-gyp rebuild",
+    "build-native-debug": "node-gyp rebuild --debug",
     "clean": "node-gyp clean",
-    "dev": "electron . --inspect=5858",
-    "install-obs": "npm install obs-websocket-js@5.0.6"
+    "rebuild": "npm run clean && npm run build-native",
+    "build": "electron-builder",
+    "build-win": "electron-builder --win",
+    "test": "echo \"No tests specified\" && exit 0"
   },
+  "keywords": [
+    "midi",
+    "audio",
+    "controller",
+    "mixing",
+    "obs",
+    "streaming"
+  ],
   "author": "Your Name",
   "license": "MIT",
   "devDependencies": {

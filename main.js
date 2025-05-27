@@ -3,7 +3,25 @@ const path = require('path');
 const Store = require('electron-store');
 const fs = require('fs');
 
-// Check if files exist
+// Configuration store
+const store = new Store();
+
+let mainWindow;
+let audioAPI = null;
+let isNativeAudioAvailable = false;
+let appStatus = { mode: 'unknown' };
+
+// Load build status if available
+try {
+    if (fs.existsSync('build-status.json')) {
+        appStatus = JSON.parse(fs.readFileSync('build-status.json', 'utf8'));
+        console.log(`📋 Build Status: ${appStatus.mode} mode`);
+    }
+} catch (error) {
+    console.warn('⚠️  Could not load build status');
+}
+
+// Check required files
 const checkFiles = () => {
     const requiredFiles = [
         'renderer/index.html',
@@ -11,30 +29,25 @@ const checkFiles = () => {
         'renderer/renderer.js'
     ];
     
-    let allFilesExist = true;
-    requiredFiles.forEach(file => {
-        const filePath = path.join(__dirname, file);
-        if (!fs.existsSync(filePath)) {
-            console.error(`Missing file: ${file}`);
-            allFilesExist = false;
-        } else {
-            console.log(`✓ Found: ${file}`);
-        }
-    });
+    const missing = requiredFiles.filter(file => 
+        !fs.existsSync(path.join(__dirname, file))
+    );
     
-    return allFilesExist;
+    if (missing.length > 0) {
+        console.error('❌ Missing files:', missing);
+        return false;
+    }
+    
+    console.log('✅ All required files found');
+    return true;
 };
 
-// Konfiguration speichern
-const store = new Store();
-
-let mainWindow;
-let audioSources = [];
-
 function createWindow() {
-    // Check files before creating window
     if (!checkFiles()) {
-        dialog.showErrorBox('Missing Files', 'Some required files are missing. Please ensure all renderer files exist.');
+        dialog.showErrorBox(
+            'Missing Files', 
+            'Required files are missing. Please check installation or run: node build-fix.js'
+        );
         app.quit();
         return;
     }
@@ -42,33 +55,63 @@ function createWindow() {
     mainWindow = new BrowserWindow({
         width: 1200,
         height: 800,
-        minWidth: 600,
-        minHeight: 400,
+        minWidth: 800,
+        minHeight: 600,
         backgroundColor: '#1a1918',
         webPreferences: {
             preload: path.join(__dirname, 'preload.js'),
             contextIsolation: true,
-            nodeIntegration: false
+            nodeIntegration: false,
+            enableRemoteModule: false
         },
-        titleBarStyle: 'hiddenInset',
+        titleBarStyle: process.platform === 'darwin' ? 'hiddenInset' : 'default',
         frame: process.platform !== 'win32',
         icon: path.join(__dirname, 'assets/icons/icon.png')
     });
 
+    // Load the app
     mainWindow.loadFile(path.join(__dirname, 'renderer/index.html'));
 
-    // Open dev tools in development
+    // Development tools
     if (process.env.NODE_ENV === 'development' || process.argv.includes('--dev')) {
-        mainWindow.webContents.once('dom-ready', () => {
-            mainWindow.webContents.openDevTools();
-        });
+        mainWindow.webContents.openDevTools();
     }
 
+    // Window event handlers
     mainWindow.on('closed', () => {
         mainWindow = null;
     });
     
-    // Window control handlers (Windows)
+    // Window controls for Windows
+    if (process.platform === 'win32') {
+        setupWindowControls();
+    }
+    
+    // Send initial status
+    mainWindow.webContents.once('dom-ready', () => {
+        setTimeout(() => {
+            if (mainWindow) {
+                mainWindow.webContents.send('audio-status-update', {
+                    isNativeAvailable: isNativeAudioAvailable,
+                    mode: appStatus.mode,
+                    message: getStatusMessage()
+                });
+            }
+        }, 1000);
+    });
+}
+
+function getStatusMessage() {
+    if (isNativeAudioAvailable) {
+        return '🎉 Native Windows Audio Control Active - Real app control enabled!';
+    } else if (appStatus.mode === 'mock') {
+        return '🎨 Enhanced Mock Mode - Realistic VU meters and full UI functionality';
+    } else {
+        return '⚠️  Limited mode - run "node build-fix.js" for full functionality';
+    }
+}
+
+function setupWindowControls() {
     ipcMain.on('minimize-window', () => {
         if (mainWindow) mainWindow.minimize();
     });
@@ -88,7 +131,353 @@ function createWindow() {
     });
 }
 
-app.whenReady().then(() => {
+// Initialize audio module with enhanced error handling
+async function initializeAudioModule() {
+    console.log('🎵 Initializing audio module...');
+    
+    try {
+        // Load the audio API (will automatically fallback to mock if native fails)
+        audioAPI = require('./native/audio-api');
+        
+        if (audioAPI.isNativeAvailable()) {
+            isNativeAudioAvailable = true;
+            console.log('✅ Native audio module loaded successfully');
+            console.log('🎛️ Real Windows audio control enabled');
+        } else {
+            isNativeAudioAvailable = false;
+            console.log('✅ Enhanced mock audio module loaded');
+            console.log('🎨 Realistic VU meters and app simulation enabled');
+        }
+        
+        // Start monitoring
+        if (audioAPI.startMonitoring) {
+            await audioAPI.startMonitoring(isNativeAudioAvailable ? 100 : 150);
+        }
+        
+        return true;
+        
+    } catch (error) {
+        console.error('❌ Failed to initialize audio module:', error);
+        
+        // Create minimal fallback
+        audioAPI = createMinimalFallback();
+        isNativeAudioAvailable = false;
+        
+        return false;
+    }
+}
+
+// Minimal fallback for worst-case scenarios
+function createMinimalFallback() {
+    console.log('📝 Creating minimal fallback audio API');
+    
+    return {
+        getSessions: () => [
+            { id: 1, name: 'System Audio', displayName: 'System Audio', volume: 75, muted: false, level: 0 },
+            { id: 2, name: 'Microphone', displayName: 'Microphone', volume: 60, muted: false, level: 0 }
+        ],
+        setVolume: async () => true,
+        toggleMute: async () => true,
+        startMonitoring: async () => console.log('📝 Minimal monitoring started'),
+        stopMonitoring: () => console.log('📝 Minimal monitoring stopped'),
+        isNativeAvailable: () => false,
+        getStatus: () => ({ isNative: false, mode: 'fallback' })
+    };
+}
+
+// Enhanced IPC Handlers
+ipcMain.handle('get-audio-sources', async () => {
+    try {
+        if (!audioAPI) {
+            console.warn('⚠️  Audio API not initialized');
+            return [];
+        }
+        
+        const sessions = audioAPI.getSessions();
+        const sources = [];
+        
+        // Add system sources
+        sources.push({
+            id: 'system',
+            name: isNativeAudioAvailable ? 'System Audio' : '🎨 Desktop Audio (Enhanced Mock)',
+            type: 'system',
+            volume: 75,
+            muted: false,
+            level: Math.random() * 0.3
+        });
+        
+        sources.push({
+            id: 'microphone',
+            name: isNativeAudioAvailable ? 'Default Microphone' : '🎤 Microphone (Enhanced Mock)',
+            type: 'input',
+            volume: 60,
+            muted: false,
+            level: Math.random() * 0.2
+        });
+        
+        // Add application sessions
+        sessions.forEach(session => {
+            sources.push({
+                id: `app_${session.id}`,
+                name: isNativeAudioAvailable ? session.displayName : `🎨 ${session.displayName} (Mock)`,
+                type: 'application',
+                processName: session.name,
+                volume: session.volume,
+                muted: session.muted,
+                level: session.level || 0,
+                peakLevel: session.peakLevel || 0,
+                color: session.color || '#0078D4'
+            });
+        });
+        
+        console.log(`📊 Found ${sources.length} audio sources (${isNativeAudioAvailable ? 'Native' : 'Mock'} mode)`);
+        return sources;
+        
+    } catch (error) {
+        console.error('❌ Error getting audio sources:', error);
+        return [];
+    }
+});
+
+ipcMain.handle('set-app-volume', async (event, appId, volume) => {
+    if (!audioAPI) return false;
+    
+    try {
+        let targetName = appId;
+        
+        if (appId.startsWith('app_')) {
+            const sessions = audioAPI.getSessions();
+            const sessionId = parseInt(appId.replace('app_', ''));
+            const session = sessions.find(s => s.id === sessionId);
+            targetName = session ? session.name : appId;
+        }
+        
+        const success = await audioAPI.setVolume(targetName, volume);
+        
+        // Send feedback to renderer
+        if (mainWindow) {
+            mainWindow.webContents.send('volume-changed', {
+                appId: appId,
+                volume: volume,
+                success: success,
+                mode: isNativeAudioAvailable ? 'native' : 'mock'
+            });
+        }
+        
+        console.log(`🎚️ Volume set: ${targetName} -> ${volume}% (${success ? 'success' : 'failed'})`);
+        return success;
+        
+    } catch (error) {
+        console.error('❌ Failed to set volume:', error);
+        return false;
+    }
+});
+
+ipcMain.handle('toggle-app-mute', async (event, appId) => {
+    if (!audioAPI) return false;
+    
+    try {
+        let targetName = appId;
+        
+        if (appId.startsWith('app_')) {
+            const sessions = audioAPI.getSessions();
+            const sessionId = parseInt(appId.replace('app_', ''));
+            const session = sessions.find(s => s.id === sessionId);
+            targetName = session ? session.name : appId;
+        }
+        
+        const success = await audioAPI.toggleMute(targetName);
+        
+        // Send feedback to renderer
+        if (mainWindow) {
+            mainWindow.webContents.send('mute-toggled', {
+                appId: appId,
+                success: success,
+                mode: isNativeAudioAvailable ? 'native' : 'mock'
+            });
+        }
+        
+        console.log(`🔇 Mute toggled: ${targetName} (${success ? 'success' : 'failed'})`);
+        return success;
+        
+    } catch (error) {
+        console.error('❌ Failed to toggle mute:', error);
+        return false;
+    }
+});
+
+// Configuration handlers
+ipcMain.handle('save-config', async (event, config) => {
+    try {
+        store.set('config', config);
+        console.log('💾 Configuration saved');
+        return true;
+    } catch (error) {
+        console.error('❌ Failed to save config:', error);
+        return false;
+    }
+});
+
+ipcMain.handle('load-config', async () => {
+    try {
+        const config = store.get('config', {
+            audioChannels: [],
+            hotkeys: [],
+            settings: {}
+        });
+        console.log('📋 Configuration loaded');
+        return config;
+    } catch (error) {
+        console.error('❌ Failed to load config:', error);
+        return { audioChannels: [], hotkeys: [], settings: {} };
+    }
+});
+
+// File selection
+ipcMain.handle('select-audio-file', async () => {
+    try {
+        const result = await dialog.showOpenDialog(mainWindow, {
+            properties: ['openFile'],
+            filters: [
+                { name: 'Audio Files', extensions: ['mp3', 'wav', 'ogg', 'flac', 'm4a', 'aac', 'wma'] }
+            ]
+        });
+        
+        return result.canceled ? null : result.filePaths[0];
+    } catch (error) {
+        console.error('❌ Failed to select audio file:', error);
+        return null;
+    }
+});
+
+// Virtual Audio Output
+ipcMain.handle('create-virtual-output', async (event, name) => {
+    try {
+        console.log(`🔌 Creating virtual output: ${name}`);
+        
+        const virtualOutput = {
+            id: `virtual_${Date.now()}`,
+            name: name,
+            deviceId: `virtual_device_${Math.random().toString(36).substr(2, 9)}`,
+            created: new Date().toISOString(),
+            mode: isNativeAudioAvailable ? 'native' : 'mock'
+        };
+        
+        console.log(`✅ Virtual output created: ${virtualOutput.id}`);
+        return { success: true, ...virtualOutput };
+        
+    } catch (error) {
+        console.error('❌ Failed to create virtual output:', error);
+        return { success: false, error: error.message };
+    }
+});
+
+// Audio Routing
+ipcMain.handle('route-audio', async (event, sourceId, targetId, volume) => {
+    try {
+        console.log(`🔀 Routing audio: ${sourceId} -> ${targetId} at ${volume}%`);
+        
+        if (mainWindow) {
+            mainWindow.webContents.send('audio-routed', {
+                source: sourceId,
+                target: targetId,
+                volume: volume,
+                mode: isNativeAudioAvailable ? 'native' : 'mock'
+            });
+        }
+        
+        return true;
+    } catch (error) {
+        console.error('❌ Failed to route audio:', error);
+        return false;
+    }
+});
+
+// Routing Matrix
+ipcMain.handle('get-routing-matrix', async () => {
+    try {
+        const outputs = [
+            { id: 'obs_mix', name: 'OBS Mix' },
+            { id: 'stream_mix', name: 'Stream Mix' },
+            { id: 'recording_mix', name: 'Recording Mix' }
+        ];
+        
+        const inputs = audioAPI ? audioAPI.getSessions() : [];
+        
+        return {
+            inputs: inputs,
+            outputs: outputs,
+            routes: new Map(),
+            mode: isNativeAudioAvailable ? 'native' : 'mock'
+        };
+    } catch (error) {
+        console.error('❌ Failed to get routing matrix:', error);
+        return null;
+    }
+});
+
+// Audio status information
+ipcMain.handle('get-audio-status', async () => {
+    return {
+        isNativeAvailable: isNativeAudioAvailable,
+        mockMode: !isNativeAudioAvailable,
+        platform: process.platform,
+        buildPath: path.join(__dirname, 'build', 'Release', 'audio_controller.node'),
+        buildExists: fs.existsSync(path.join(__dirname, 'build', 'Release', 'audio_controller.node')),
+        nodeVersion: process.version,
+        electronVersion: process.versions.electron,
+        sessionCount: audioAPI ? audioAPI.getSessions().length : 0,
+        mode: appStatus.mode,
+        message: getStatusMessage()
+    };
+});
+
+// Enhanced level monitoring
+let levelMonitorInterval = null;
+
+ipcMain.handle('start-level-monitor', async () => {
+    if (levelMonitorInterval) return;
+    
+    console.log(`🎵 Starting audio level monitoring (${isNativeAudioAvailable ? 'Native' : 'Enhanced Mock'})`);
+    
+    levelMonitorInterval = setInterval(() => {
+        if (!mainWindow || !audioAPI) return;
+        
+        try {
+            const sessions = audioAPI.getSessions();
+            const levels = sessions.map(session => ({
+                id: session.id,
+                level: session.level || 0,
+                peakLevel: session.peakLevel || 0,
+                color: session.color || '#0078D4',
+                isNative: isNativeAudioAvailable
+            }));
+            
+            mainWindow.webContents.send('audio-levels', {
+                levels: levels,
+                isNativeAudio: isNativeAudioAvailable,
+                timestamp: Date.now(),
+                mode: appStatus.mode
+            });
+        } catch (error) {
+            console.error('❌ Error in level monitor:', error);
+        }
+    }, isNativeAudioAvailable ? 50 : 100);
+});
+
+ipcMain.handle('stop-level-monitor', async () => {
+    if (levelMonitorInterval) {
+        clearInterval(levelMonitorInterval);
+        levelMonitorInterval = null;
+        console.log('🎵 Audio level monitoring stopped');
+    }
+});
+
+// App lifecycle
+app.whenReady().then(async () => {
+    console.log('🚀 App ready, initializing...');
+    
+    await initializeAudioModule();
     createWindow();
 
     app.on('activate', () => {
@@ -104,334 +493,13 @@ app.on('window-all-closed', () => {
     }
 });
 
-// Improved audio module loading with better error handling
-let audioAPI;
-let isNativeAudioAvailable = false;
-
-try {
-    // Try to load the compiled native module
-    const nativeModulePath = path.join(__dirname, 'build', 'Release', 'audio_controller.node');
-    
-    if (fs.existsSync(nativeModulePath)) {
-        const nativeModule = require(nativeModulePath);
-        if (nativeModule && nativeModule.AudioController) {
-            audioAPI = require('./native/audio-api');
-            audioAPI.startMonitoring();
-            isNativeAudioAvailable = true;
-            console.log('✅ Native audio module loaded successfully');
-        } else {
-            throw new Error('Native module loaded but AudioController class not found');
-        }
-    } else {
-        throw new Error(`Native module not found at: ${nativeModulePath}`);
-    }
-} catch (error) {
-    console.warn('⚠️  Native audio module not available:', error.message);
-    console.warn('📝 Falling back to mock implementation');
-    console.warn('💡 To enable real audio control:');
-    console.warn('   1. Install Visual Studio Build Tools');
-    console.warn('   2. Run: npm run setup');
-    console.warn('   3. Run: npm run build-native');
-    
-    isNativeAudioAvailable = false;
-    
-    // Enhanced mock implementation for development
-    audioAPI = {
-        getSessions: () => {
-            // More realistic mock data that changes over time
-            const mockApps = [
-                { name: 'Spotify.exe', displayName: 'Spotify', baseVolume: 70 },
-                { name: 'Discord.exe', displayName: 'Discord', baseVolume: 50 },
-                { name: 'Chrome.exe', displayName: 'Chrome', baseVolume: 80 },
-                { name: 'Game.exe', displayName: 'Game Audio', baseVolume: 60 },
-                { name: 'OBS64.exe', displayName: 'OBS Studio', baseVolume: 45 }
-            ];
-            
-            return mockApps.map((app, index) => ({
-                id: index + 1,
-                name: app.name,
-                displayName: app.displayName,
-                volume: Math.max(0, Math.min(100, app.baseVolume + Math.floor(Math.random() * 20 - 10))),
-                muted: Math.random() > 0.8
-            }));
-        },
-        setVolume: (name, volume) => {
-            console.log(`🔊 Mock: Setting ${name} volume to ${volume}%`);
-            return Promise.resolve(true);
-        },
-        toggleMute: (name) => {
-            console.log(`🔇 Mock: Toggling mute for ${name}`);
-            return Promise.resolve(true);
-        },
-        createRoutingMatrix: (outputs) => {
-            console.log(`🎚️  Mock: Creating routing matrix with ${outputs.length} outputs`);
-            return Promise.resolve({
-                inputs: audioAPI.getSessions(),
-                outputs: outputs,
-                routes: new Map()
-            });
-        },
-        routeAudio: (inputId, outputId, volume) => {
-            console.log(`🔀 Mock: Routing ${inputId} -> ${outputId} at ${volume}%`);
-            return Promise.resolve(true);
-        },
-        startMonitoring: () => {
-            console.log('🎵 Mock: Audio monitoring started');
-        },
-        stopMonitoring: () => {
-            console.log('🎵 Mock: Audio monitoring stopped');
-        }
-    };
-}
-
-// Enhanced IPC Handlers with better error handling
-ipcMain.handle('get-audio-sources', async () => {
-    try {
-        if (isNativeAudioAvailable && audioAPI) {
-            const sessions = audioAPI.getSessions();
-            
-            const sources = [
-                { id: 'system', name: 'System Audio', type: 'system', volume: 75, muted: false },
-                { id: 'microphone', name: 'Mikrofon', type: 'input', volume: 60, muted: false }
-            ];
-            
-            sessions.forEach(session => {
-                sources.push({
-                    id: `app_${session.id}`,
-                    name: session.displayName || session.name,
-                    type: 'application',
-                    processName: session.name,
-                    volume: session.volume,
-                    muted: session.muted
-                });
-            });
-            
-            return sources;
-        } else {
-            // Mock data with indicator that it's not real
-            return [
-                { id: 'system', name: '🔇 System Audio (Mock)', type: 'system', volume: 75, muted: false },
-                { id: 'microphone', name: '🔇 Mikrofon (Mock)', type: 'input', volume: 60, muted: false },
-                { id: 'app_spotify', name: '🔇 Spotify (Mock)', type: 'application', volume: 70, muted: false },
-                { id: 'app_discord', name: '🔇 Discord (Mock)', type: 'application', volume: 50, muted: false },
-                { id: 'app_chrome', name: '🔇 Chrome (Mock)', type: 'application', volume: 80, muted: false }
-            ];
-        }
-    } catch (error) {
-        console.error('Error getting audio sources:', error);
-        return [];
-    }
-});
-
-ipcMain.handle('save-config', async (event, config) => {
-    try {
-        store.set('config', config);
-        return true;
-    } catch (error) {
-        console.error('Failed to save config:', error);
-        return false;
-    }
-});
-
-ipcMain.handle('load-config', async () => {
-    try {
-        return store.get('config', {
-            audioChannels: [],
-            hotkeys: [],
-            settings: {}
-        });
-    } catch (error) {
-        console.error('Failed to load config:', error);
-        return {
-            audioChannels: [],
-            hotkeys: [],
-            settings: {}
-        };
-    }
-});
-
-ipcMain.handle('select-audio-file', async () => {
-    try {
-        const result = await dialog.showOpenDialog(mainWindow, {
-            properties: ['openFile'],
-            filters: [
-                { name: 'Audio Files', extensions: ['mp3', 'wav', 'ogg', 'flac', 'm4a', 'aac'] }
-            ]
-        });
-        
-        if (!result.canceled && result.filePaths.length > 0) {
-            return result.filePaths[0];
-        }
-        return null;
-    } catch (error) {
-        console.error('Failed to select audio file:', error);
-        return null;
-    }
-});
-
-// Virtual Audio Cable Integration
-ipcMain.handle('create-virtual-output', async (event, name) => {
-    try {
-        console.log('Creating virtual output:', name);
-        return { success: true, deviceId: `virtual_${Date.now()}` };
-    } catch (error) {
-        console.error('Failed to create virtual output:', error);
-        return { success: false, error: error.message };
-    }
-});
-
-// Set application volume with real/mock indication
-ipcMain.handle('set-app-volume', async (event, appId, volume) => {
-    if (!audioAPI) return false;
-    
-    try {
-        const processName = appId.replace('app_', '');
-        const result = await audioAPI.setVolume(processName, volume);
-        
-        if (!isNativeAudioAvailable) {
-            // Send notification to renderer that this is mock
-            mainWindow?.webContents.send('mock-action-performed', {
-                action: 'volume-change',
-                app: processName,
-                volume: volume
-            });
-        }
-        
-        return result;
-    } catch (error) {
-        console.error('Failed to set volume:', error);
-        return false;
-    }
-});
-
-// Mute/unmute application with real/mock indication
-ipcMain.handle('toggle-app-mute', async (event, appId) => {
-    if (!audioAPI) return false;
-    
-    try {
-        const processName = appId.replace('app_', '');
-        const result = await audioAPI.toggleMute(processName);
-        
-        if (!isNativeAudioAvailable) {
-            mainWindow?.webContents.send('mock-action-performed', {
-                action: 'mute-toggle',
-                app: processName
-            });
-        }
-        
-        return result;
-    } catch (error) {
-        console.error('Failed to toggle mute:', error);
-        return false;
-    }
-});
-
-// Enhanced audio routing
-ipcMain.handle('route-audio', async (event, sourceId, targetId, volume) => {
-    if (!audioAPI) {
-        console.log(`🔀 Mock routing: ${sourceId} to ${targetId} at ${volume}%`);
-        return true;
-    }
-    
-    try {
-        const result = await audioAPI.routeAudio(sourceId, targetId, volume);
-        
-        if (!isNativeAudioAvailable) {
-            mainWindow?.webContents.send('mock-action-performed', {
-                action: 'audio-route',
-                source: sourceId,
-                target: targetId,
-                volume: volume
-            });
-        }
-        
-        return result;
-    } catch (error) {
-        console.error('Failed to route audio:', error);
-        return false;
-    }
-});
-
-// Get routing matrix
-ipcMain.handle('get-routing-matrix', async () => {
-    if (!audioAPI) return null;
-    
-    try {
-        const outputs = [
-            { id: 'obs_mix', name: 'OBS Mix' },
-            { id: 'stream_mix', name: 'Stream Mix' },
-            { id: 'recording_mix', name: 'Recording Mix' }
-        ];
-        
-        return await audioAPI.createRoutingMatrix(outputs);
-    } catch (error) {
-        console.error('Failed to get routing matrix:', error);
-        return null;
-    }
-});
-
-// Enhanced level monitoring with mock data indication
-let levelMonitorInterval = null;
-ipcMain.handle('start-level-monitor', async () => {
-    if (levelMonitorInterval) return;
-    
-    console.log(`🎵 Starting audio level monitoring (${isNativeAudioAvailable ? 'Native' : 'Mock'} mode)`);
-    
-    levelMonitorInterval = setInterval(() => {
-        if (!mainWindow || !audioAPI) return;
-        
-        try {
-            const sessions = audioAPI.getSessions();
-            
-            const levels = sessions.map(session => ({
-                id: session.id,
-                level: isNativeAudioAvailable 
-                    ? Math.random() * session.volume / 100  // Real audio levels would go here
-                    : Math.random() * 0.8 * session.volume / 100,  // Mock with less aggressive levels
-                isMock: !isNativeAudioAvailable
-            }));
-            
-            mainWindow.webContents.send('audio-levels', {
-                levels: levels,
-                isNativeAudio: isNativeAudioAvailable,
-                timestamp: Date.now()
-            });
-        } catch (error) {
-            console.error('Error in level monitor:', error);
-        }
-    }, isNativeAudioAvailable ? 50 : 100); // Slower refresh for mock data
-});
-
-ipcMain.handle('stop-level-monitor', async () => {
-    if (levelMonitorInterval) {
-        clearInterval(levelMonitorInterval);
-        levelMonitorInterval = null;
-        console.log('🎵 Audio level monitoring stopped');
-    }
-});
-
-// Add handler to check native audio status
-ipcMain.handle('get-audio-status', async () => {
-    const buildPath = path.join(__dirname, 'build', 'Release', 'audio_controller.node');
-    
-    return {
-        isNativeAvailable: isNativeAudioAvailable,
-        mockMode: !isNativeAudioAvailable,
-        platform: process.platform,
-        buildPath: buildPath,
-        buildExists: fs.existsSync(buildPath),
-        nodeVersion: process.version,
-        electronVersion: process.versions.electron
-    };
-});
-
-// Clean up on app quit
 app.on('before-quit', () => {
-    console.log('🧹 Cleaning up before quit...');
+    console.log('🧹 Cleaning up...');
     
     if (audioAPI && audioAPI.stopMonitoring) {
         audioAPI.stopMonitoring();
     }
+    
     if (levelMonitorInterval) {
         clearInterval(levelMonitorInterval);
     }
@@ -439,23 +507,9 @@ app.on('before-quit', () => {
 
 // Error handling
 process.on('uncaughtException', (error) => {
-    console.error('Uncaught Exception:', error);
+    console.error('💥 Uncaught Exception:', error);
 });
 
 process.on('unhandledRejection', (reason, promise) => {
-    console.error('Unhandled Rejection at:', promise, 'reason:', reason);
-});
-
-// Send audio status to renderer when ready
-app.on('ready', () => {
-    setTimeout(() => {
-        if (mainWindow) {
-            mainWindow.webContents.send('audio-status-update', {
-                isNativeAvailable: isNativeAudioAvailable,
-                message: isNativeAudioAvailable 
-                    ? 'Native audio module loaded successfully' 
-                    : 'Running in mock mode - run "npm run build-native" to enable real audio control'
-            });
-        }
-    }, 2000);
+    console.error('💥 Unhandled Rejection:', promise, 'reason:', reason);
 });
